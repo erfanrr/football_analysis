@@ -7,8 +7,9 @@ sys.path.append('../')
 from utils import measure_distance,measure_xy_distance
 
 class CameraMovementEstimator():
-    def __init__(self,frame):
+    def __init__(self,frame, method: str = 'homography'):
         self.minimum_distance = 5
+        self.method = method  # 'homography' or 'lk'
 
         self.lk_params = dict(
             winSize = (15,15),
@@ -29,6 +30,9 @@ class CameraMovementEstimator():
             mask = mask_features
         )
 
+        # ORB for homography-based global motion
+        self._orb = cv2.ORB_create(nfeatures=1000)
+
     def add_adjust_positions_to_tracks(self,tracks, camera_movement_per_frame):
         for object, object_tracks in tracks.items():
             for frame_num, track in enumerate(object_tracks):
@@ -40,14 +44,8 @@ class CameraMovementEstimator():
                     
 
 
-    def get_camera_movement(self,frames,read_from_stub=False, stub_path=None):
-        # Read the stub 
-        if read_from_stub and stub_path is not None and os.path.exists(stub_path):
-            with open(stub_path,'rb') as f:
-                return pickle.load(f)
-
+    def _estimate_motion_lk(self, frames):
         camera_movement = [[0,0]]*len(frames)
-
         old_gray = cv2.cvtColor(frames[0],cv2.COLOR_BGR2GRAY)
         old_features = cv2.goodFeaturesToTrack(old_gray,**self.features)
 
@@ -72,7 +70,49 @@ class CameraMovementEstimator():
                 old_features = cv2.goodFeaturesToTrack(frame_gray,**self.features)
 
             old_gray = frame_gray.copy()
-        
+        return camera_movement
+
+    def _estimate_motion_homography(self, frames):
+        camera_movement = [[0,0]]*len(frames)
+        prev_gray = cv2.cvtColor(frames[0],cv2.COLOR_BGR2GRAY)
+        for frame_num in range(1,len(frames)):
+            gray = cv2.cvtColor(frames[frame_num],cv2.COLOR_BGR2GRAY)
+            kp1, des1 = self._orb.detectAndCompute(prev_gray, None)
+            kp2, des2 = self._orb.detectAndCompute(gray, None)
+            if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
+                prev_gray = gray
+                continue
+            matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+            matches = matcher.match(des1, des2)
+            if len(matches) < 10:
+                prev_gray = gray
+                continue
+            matches = sorted(matches, key=lambda m: m.distance)[:200]
+            src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1,1,2)
+            dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1,1,2)
+            H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+            if H is None:
+                prev_gray = gray
+                continue
+            tx, ty = float(H[0,2]), float(H[1,2])
+            camera_movement[frame_num] = [tx, ty]
+            prev_gray = gray
+        return camera_movement
+
+    def get_camera_movement(self,frames,read_from_stub=False, stub_path=None):
+        # Read the stub 
+        if read_from_stub and stub_path is not None and os.path.exists(stub_path):
+            with open(stub_path,'rb') as f:
+                return pickle.load(f)
+
+        if self.method == 'homography':
+            camera_movement = self._estimate_motion_homography(frames)
+            # Fallback if homography failed to produce any movement
+            if not any(cm != [0,0] for cm in camera_movement):
+                camera_movement = self._estimate_motion_lk(frames)
+        else:
+            camera_movement = self._estimate_motion_lk(frames)
+
         if stub_path is not None:
             with open(stub_path,'wb') as f:
                 pickle.dump(camera_movement,f)

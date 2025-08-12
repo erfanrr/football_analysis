@@ -28,3 +28,32 @@ To run this project, you need to have the following requirements installed:
 - NumPy
 - Matplotlib
 - Pandas
+
+## Quick Start
+
+1. **Prerequisites**: Ensure you have the required models and input video:
+   - Place your input video in `input_videos/` directory
+   - Ensure `models/best.pt` exists (or download from [Trained Yolo v5](https://drive.google.com/file/d/1DC2kCygbBWUKheQ_9cFziCsYVSRw6axK/view?usp=sharing))
+
+2. **Run the pipeline**:
+   ```bash
+   python main.py
+   ```
+
+3. **Output**: Check `output_videos/output_video.avi` for the annotated video
+
+## Documentation
+
+For detailed information about the system:
+
+- **[Execution Pipeline](docs/execution-pipeline.md)**: Complete overview of how the system works, from video input to annotated output
+- **[Ball Tracking & Camera Compensation](docs/ball-tracking-and-camera-compensation.md)**: Advanced techniques for improving ball tracking, camera motion compensation, and scaling to full matches
+
+## Architecture Overview
+
+The system processes football video through several stages:
+1. **Detection & Tracking**: YOLO + ByteTrack for object detection and tracking
+2. **Motion Compensation**: Lucas-Kanade optical flow for camera movement estimation
+3. **View Transformation**: Homography-based mapping to field coordinates
+4. **Analysis**: Team assignment, ball possession, speed/distance calculation
+5. **Visualization**: Annotated video with metrics and overlays

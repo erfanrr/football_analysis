@@ -6,12 +6,19 @@ import numpy as np
 import pandas as pd
 import cv2
 import sys 
+import torch
 sys.path.append('../')
 from utils import get_center_of_bbox, get_bbox_width, get_foot_position
 
 class Tracker:
-    def __init__(self, model_path):
-        self.model = YOLO(model_path) 
+    def __init__(self, model_path, use_cuda: bool = True):
+        # Select device
+        self.device = 'cuda' if (use_cuda and torch.cuda.is_available()) else 'cpu'
+        
+        # Load model and move to device
+        self.model = YOLO(model_path)
+        if hasattr(self.model, 'model') and hasattr(self.model.model, 'to'):
+            self.model.model.to(self.device)
         self.tracker = sv.ByteTrack()
 
     def add_position_to_tracks(sekf,tracks):
@@ -37,11 +44,35 @@ class Tracker:
 
         return ball_positions
 
+    def smooth_ball_positions_adjusted(self, tracks, alpha: float = 0.25):
+        """Apply exponential smoothing to ball position_adjusted across frames.
+
+        Parameters
+        - tracks: pipeline tracks dict
+        - alpha: smoothing factor (0..1), higher = less smoothing
+        """
+        previous_position = None
+        for frame_num, ball_dict in enumerate(tracks.get("ball", [])):
+            ball_info = ball_dict.get(1)
+            if not ball_info:
+                continue
+            position_adjusted = ball_info.get("position_adjusted")
+            if position_adjusted is None:
+                continue
+            if previous_position is None:
+                previous_position = position_adjusted
+                continue
+            smoothed_x = alpha * position_adjusted[0] + (1 - alpha) * previous_position[0]
+            smoothed_y = alpha * position_adjusted[1] + (1 - alpha) * previous_position[1]
+            smoothed = (smoothed_x, smoothed_y)
+            tracks["ball"][frame_num][1]["position_adjusted"] = smoothed
+            previous_position = smoothed
+
     def detect_frames(self, frames):
         batch_size=20 
         detections = [] 
         for i in range(0,len(frames),batch_size):
-            detections_batch = self.model.predict(frames[i:i+batch_size],conf=0.1)
+            detections_batch = self.model.predict(frames[i:i+batch_size],conf=0.1, device=self.device)
             detections += detections_batch
         return detections
 

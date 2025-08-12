@@ -1,4 +1,3 @@
-#! python3.11
 from utils import read_video, save_video
 from trackers import Tracker
 import cv2
@@ -15,32 +14,28 @@ def main():
     video_frames = read_video('input_videos/08fd33_4.mp4')
 
     # Initialize Tracker
-    tracker = Tracker('models/best.pt', use_cuda=True)
+    tracker = Tracker('models/best.pt')
 
     tracks = tracker.get_object_tracks(video_frames,
                                        read_from_stub=True,
                                        stub_path='stubs/track_stubs.pkl')
-
-    # Interpolate Ball Positions early so downstream positions use interpolated bboxes
-    tracks["ball"] = tracker.interpolate_ball_positions(tracks["ball"])
-
-    # Get object positions
+    # Get object positions 
     tracker.add_position_to_tracks(tracks)
 
     # camera movement estimator
-    camera_movement_estimator = CameraMovementEstimator(video_frames[0], method='homography')
+    camera_movement_estimator = CameraMovementEstimator(video_frames[0])
     camera_movement_per_frame = camera_movement_estimator.get_camera_movement(video_frames,
                                                                                 read_from_stub=True,
                                                                                 stub_path='stubs/camera_movement_stub.pkl')
     camera_movement_estimator.add_adjust_positions_to_tracks(tracks,camera_movement_per_frame)
 
 
-    # Smooth ball adjusted positions for more stable transformed output
-    tracker.smooth_ball_positions_adjusted(tracks, alpha=0.25)
-
     # View Trasnformer
     view_transformer = ViewTransformer()
     view_transformer.add_transformed_position_to_tracks(tracks)
+
+    # Interpolate Ball Positions
+    tracks["ball"] = tracker.interpolate_ball_positions(tracks["ball"])
 
     # Speed and distance estimator
     speed_and_distance_estimator = SpeedAndDistance_Estimator()
@@ -64,16 +59,8 @@ def main():
     player_assigner =PlayerBallAssigner()
     team_ball_control= []
     for frame_num, player_track in enumerate(tracks['players']):
-        ball_dict = tracks['ball'][frame_num]
-        ball_bbox = ball_dict[1]['bbox']
-        ball_position_transformed = ball_dict[1].get('position_transformed')
-
-        # Prefer field-scale assignment; fallback to pixel-based if unavailable
-        assigned_player = player_assigner.assign_ball_to_player_field(
-            player_track, ball_position_transformed, threshold_meters=2.0
-        )
-        if assigned_player == -1:
-            assigned_player = player_assigner.assign_ball_to_player(player_track, ball_bbox)
+        ball_bbox = tracks['ball'][frame_num][1]['bbox']
+        assigned_player = player_assigner.assign_ball_to_player(player_track, ball_bbox)
 
         if assigned_player != -1:
             tracks['players'][frame_num][assigned_player]['has_ball'] = True
